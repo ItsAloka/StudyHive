@@ -1,53 +1,120 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using StudyHive.Api.Common;
+using StudyHive.Api.Data;
+using StudyHive.Api.Data.Entities;
 
 namespace StudyHive.Api.Controllers.Store;
 
-/// <summary>
-/// S3: suppliers and which consumables they supply.
-///
-/// SCAFFOLD ONLY - owned by S3 (Consumables and Stock), not implemented yet. Every action below returns 501 so the
-/// route, its role gate and its shape are pinned by the plan's DOCS section 11 API table before
-/// anyone writes a line of logic. Nothing here fabricates data: an unimplemented endpoint must
-/// never answer as though it worked.
-///
-/// To implement one: inject StudyHiveDbContext, delete the NotImplemented() call, and return the
-/// real result. Keep the route and the [Authorize] attribute exactly as they are - the web and
-/// mobile clients are already written against them.
-///
-/// House rules that already apply here (see DOCS/S2_S3_S4_UI_Interface_Map.md):
-///   - Lists take [FromQuery] PageQuery and return PagedResult&lt;T&gt;. Unknown sortBy is a 400.
-///   - Errors are RFC 7807 from the global handler. Never hand-roll an error body.
-///   - Deletes are deactivations, not physical deletes.
-/// </summary>
+/// <summary>S3: suppliers and which consumables they supply. See DOCS §11 API table.</summary>
 [ApiController]
 [Route("api/suppliers")]
 [Authorize]
-public sealed class SuppliersController : ControllerBase
+public sealed class SuppliersController(StudyHiveDbContext db) : ControllerBase
 {
-    /// <summary>The single place this scaffold refuses. Replace the call, not this helper.</summary>
-    private ObjectResult NotImplemented(string what) => Problem(
-        type: "https://studyhive.dev/errors/not-implemented",
-        title: "Not implemented yet",
-        statusCode: StatusCodes.Status501NotImplemented,
-        detail: $"{what} is owned by S3 (Consumables and Stock) and has not been built yet.");
-
-    /// <summary>Add a supplier.</summary>
     [HttpPost]
     [Authorize(Roles = $"{Roles.StoreOfficer},{Roles.Admin}")]
-    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
-    public IActionResult Create() => NotImplemented("Adding a supplier");
+    [ProducesResponseType(typeof(SupplierResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Create(CreateSupplierRequest request, CancellationToken ct)
+    {
+        var nameTaken = await db.Suppliers.AsNoTracking().AnyAsync(s => s.Name == request.Name.Trim(), ct);
+        if (nameTaken)
+        {
+            return Problem(
+                type: "https://studyhive.dev/errors/conflict",
+                title: "Supplier name already exists",
+                statusCode: StatusCodes.Status409Conflict,
+                detail: $"A supplier named '{request.Name}' already exists.");
+        }
 
-    /// <summary>List suppliers. Backs W-23.</summary>
+        var supplier = new Supplier
+        {
+            Id = Guid.NewGuid(),
+            Name = request.Name.Trim(),
+            ContactEmail = request.ContactEmail.Trim(),
+            Phone = request.Phone.Trim(),
+            Address = request.Address?.Trim(),
+        };
+
+        db.Suppliers.Add(supplier);
+        await db.SaveChangesAsync(ct);
+
+        return CreatedAtAction(nameof(List), null, SupplierResponse.From(supplier));
+    }
+
+    /// <summary>Backs W-23.</summary>
     [HttpGet]
-    [Authorize(Roles = $"{Roles.StoreOfficer}")]
-    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
-    public IActionResult List([FromQuery] PageQuery query) => NotImplemented("Listing suppliers");
+    [Authorize(Roles = Roles.StoreOfficer)]
+    [ProducesResponseType(typeof(PagedResult<SupplierResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> List([FromQuery] PageQuery query, [FromQuery] bool activeOnly = true, CancellationToken ct = default)
+    {
+        IQueryable<Supplier> suppliers = db.Suppliers.AsNoTracking();
 
-    /// <summary>Update a supplier.</summary>
+        if (activeOnly)
+        {
+            suppliers = suppliers.Where(s => s.IsActive);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var search = $"%{query.Search.Trim()}%";
+            suppliers = suppliers.Where(s => EF.Functions.ILike(s.Name, search));
+        }
+
+        var sortDescending = string.Equals(query.SortDir, "desc", StringComparison.OrdinalIgnoreCase);
+        IOrderedQueryable<Supplier>? sorted = query.SortBy?.ToLowerInvariant() switch
+        {
+            null or "" or "name" => sortDescending ? suppliers.OrderByDescending(s => s.Name) : suppliers.OrderBy(s => s.Name),
+            "createdat" => sortDescending ? suppliers.OrderByDescending(s => s.CreatedAt) : suppliers.OrderBy(s => s.CreatedAt),
+            _ => null,
+        };
+        if (sorted is null)
+        {
+            ModelState.AddModelError(nameof(query.SortBy), $"Unknown sortBy value '{query.SortBy}'.");
+            return ValidationProblem(ModelState);
+        }
+        suppliers = sorted;
+
+        var totalItems = await suppliers.CountAsync(ct);
+        var items = await suppliers
+            .Skip((query.Page - 1) * query.PageSize)
+            .Take(query.PageSize)
+            .Select(s => SupplierResponse.From(s))
+            .ToListAsync(ct);
+
+        return Ok(PagedResult<SupplierResponse>.Create(items, query.Page, query.PageSize, totalItems));
+    }
+
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = $"{Roles.StoreOfficer}")]
-    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
-    public IActionResult Update(Guid id) => NotImplemented("Updating a supplier");
+    [Authorize(Roles = Roles.StoreOfficer)]
+    [ProducesResponseType(typeof(SupplierResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Update(Guid id, UpdateSupplierRequest request, CancellationToken ct)
+    {
+        var supplier = await db.Suppliers.SingleOrDefaultAsync(s => s.Id == id, ct);
+        if (supplier is null) return NotFound();
+
+        var nameTaken = await db.Suppliers.AsNoTracking().AnyAsync(s => s.Id != id && s.Name == request.Name.Trim(), ct);
+        if (nameTaken)
+        {
+            return Problem(
+                type: "https://studyhive.dev/errors/conflict",
+                title: "Supplier name already exists",
+                statusCode: StatusCodes.Status409Conflict,
+                detail: $"A supplier named '{request.Name}' already exists.");
+        }
+
+        supplier.Name = request.Name.Trim();
+        supplier.ContactEmail = request.ContactEmail.Trim();
+        supplier.Phone = request.Phone.Trim();
+        supplier.Address = request.Address?.Trim();
+        supplier.IsActive = request.IsActive;
+        supplier.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+        return Ok(SupplierResponse.From(supplier));
+    }
 }

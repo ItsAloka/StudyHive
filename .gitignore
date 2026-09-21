@@ -38,6 +38,7 @@ mobile/**/ios/Flutter/.last_build_id
 .vs/
 .idea/
 .vscode/
+.kilo/
 *.swp
 .DS_Store
 Thumbs.db

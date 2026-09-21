@@ -3,6 +3,8 @@ from fastapi import APIRouter, Depends, FastAPI
 from app.agents.planner import plan as run_planner
 from app.agents.scheduling import schedule as run_scheduling
 from app.schemas import PlannerRequest, PlannerResponse, SchedulingRequest, SchedulingResponse
+from app.agents.resource import prepare_reservation as run_resource_prepare_reservation
+from app.schemas import PlannerRequest, PlannerResponse, ResourceRequest, ResourceResponse
 from app.security import require_internal_api_key
 from app.settings import settings
 
@@ -49,6 +51,12 @@ def planner_plan(request: PlannerRequest) -> PlannerResponse:
 def scheduling_propose(request: SchedulingRequest) -> SchedulingResponse:
     """S2's Scheduling Agent — filters rooms, checks conflicts and proposes slots."""
     return run_scheduling(request)
+
+
+@internal_router.post("/resource/prepare-reservation", response_model=ResourceResponse)
+def resource_prepare_reservation(request: ResourceRequest) -> ResourceResponse:
+    """S3's Resource Agent — see app/agents/resource.py for the tool sequence and DOCS §11 for the contract."""
+    return run_resource_prepare_reservation(request)
 
 
 app.include_router(internal_router)

@@ -1,41 +1,54 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using StudyHive.Api.Common;
+using StudyHive.Api.Data;
+using StudyHive.Api.Data.Entities;
 
 namespace StudyHive.Api.Controllers.Store;
 
-/// <summary>
-/// S3: the append-only stock ledger.
-///
-/// SCAFFOLD ONLY - owned by S3 (Consumables and Stock), not implemented yet. Every action below returns 501 so the
-/// route, its role gate and its shape are pinned by the plan's DOCS section 11 API table before
-/// anyone writes a line of logic. Nothing here fabricates data: an unimplemented endpoint must
-/// never answer as though it worked.
-///
-/// To implement one: inject StudyHiveDbContext, delete the NotImplemented() call, and return the
-/// real result. Keep the route and the [Authorize] attribute exactly as they are - the web and
-/// mobile clients are already written against them.
-///
-/// House rules that already apply here (see DOCS/S2_S3_S4_UI_Interface_Map.md):
-///   - Lists take [FromQuery] PageQuery and return PagedResult&lt;T&gt;. Unknown sortBy is a 400.
-///   - Errors are RFC 7807 from the global handler. Never hand-roll an error body.
-///   - Deletes are deactivations, not physical deletes.
-/// </summary>
+/// <summary>S3: the append-only stock ledger. Every row is written by <see cref="StudyHive.Api.Services.IConsumableStockService"/>
+/// alongside the counter it explains (DOCS §07: "balance_after makes it reconcilable") — this
+/// controller is read-only, on purpose: the ledger has no PUT or DELETE.</summary>
 [ApiController]
 [Route("api/stock-transactions")]
 [Authorize]
-public sealed class StockTransactionsController : ControllerBase
+public sealed class StockTransactionsController(StudyHiveDbContext db) : ControllerBase
 {
-    /// <summary>The single place this scaffold refuses. Replace the call, not this helper.</summary>
-    private ObjectResult NotImplemented(string what) => Problem(
-        type: "https://studyhive.dev/errors/not-implemented",
-        title: "Not implemented yet",
-        statusCode: StatusCodes.Status501NotImplemented,
-        detail: $"{what} is owned by S3 (Consumables and Stock) and has not been built yet.");
-
-    /// <summary>Transaction history with filter and sort.</summary>
+    /// <summary>Transaction history, filterable by consumable, with sort and pagination.</summary>
     [HttpGet]
-    [Authorize(Roles = $"{Roles.StoreOfficer}")]
-    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
-    public IActionResult List([FromQuery] PageQuery query) => NotImplemented("Listing stock transactions");
+    [Authorize(Roles = Roles.StoreOfficer)]
+    [ProducesResponseType(typeof(PagedResult<StockTransactionResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> List([FromQuery] PageQuery query, [FromQuery] Guid? consumableId, CancellationToken ct)
+    {
+        IQueryable<StockTransaction> transactions = db.StockTransactions.AsNoTracking();
+
+        if (consumableId is not null)
+        {
+            transactions = transactions.Where(t => t.ConsumableId == consumableId);
+        }
+
+        var sortDescending = !string.Equals(query.SortDir, "asc", StringComparison.OrdinalIgnoreCase);
+        IOrderedQueryable<StockTransaction>? sorted = query.SortBy?.ToLowerInvariant() switch
+        {
+            null or "" or "createdat" => sortDescending ? transactions.OrderByDescending(t => t.CreatedAt) : transactions.OrderBy(t => t.CreatedAt),
+            "transactiontype" => sortDescending ? transactions.OrderByDescending(t => t.TransactionType) : transactions.OrderBy(t => t.TransactionType),
+            _ => null,
+        };
+        if (sorted is null)
+        {
+            ModelState.AddModelError(nameof(query.SortBy), $"Unknown sortBy value '{query.SortBy}'.");
+            return ValidationProblem(ModelState);
+        }
+        transactions = sorted;
+
+        var totalItems = await transactions.CountAsync(ct);
+        var items = await transactions
+            .Skip((query.Page - 1) * query.PageSize)
+            .Take(query.PageSize)
+            .Select(t => StockTransactionResponse.From(t))
+            .ToListAsync(ct);
+
+        return Ok(PagedResult<StockTransactionResponse>.Create(items, query.Page, query.PageSize, totalItems));
+    }
 }

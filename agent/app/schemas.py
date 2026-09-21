@@ -61,6 +61,49 @@ class PlannerResponse(BaseModel):
     steps: list[PlanStep] = Field(default_factory=list)
 
 
+class ResourceRequestItem(BaseModel):
+    """One requested line. `available`/`unit_price` are StudyHive.Api's own read of `consumables`
+    at call time — this agent has no database access (DOCS §11), the same reason PlannerRequest
+    carries `student_eligible` already computed rather than asking this service to derive it."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    consumable_id: UUID = Field(alias="consumableId")
+    name: str
+    requested: int = Field(gt=0)
+    available: int = Field(ge=0)
+    unit_price: float = Field(alias="unitPrice", ge=0)
+
+
+class ResourceRequest(BaseModel):
+    """Input contract (DOCS §11 agent-io table): `{ requestedItems: [...] }`."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    requested_items: list[ResourceRequestItem] = Field(default_factory=list, alias="requestedItems")
+
+
+class ResourceResponseItem(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    consumable_id: UUID = Field(alias="consumableId")
+    name: str
+    requested: int
+    available: int
+    sufficient: bool
+    unit_price: float = Field(alias="unitPrice")
+    line_total: float = Field(alias="lineTotal")
+
+
+class ResourceResponse(BaseModel):
+    """Output contract (DOCS §11 agent-io table):
+    `{ items[{consumableId, name, requested, available, sufficient, unitPrice, lineTotal}], totalCost, allAvailable }`."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[ResourceResponseItem] = Field(default_factory=list)
+    total_cost: float = Field(alias="totalCost")
+    all_available: bool = Field(alias="allAvailable")
 class SchedulingTimeBlock(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

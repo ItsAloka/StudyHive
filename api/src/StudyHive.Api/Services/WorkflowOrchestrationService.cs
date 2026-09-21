@@ -11,9 +11,13 @@ using StudyHive.Api.Data.Entities;
 namespace StudyHive.Api.Services;
 
 /// <summary>
-/// Runs one booking request's agentic workflow end to end: calls the Planner and Scheduling Agents,
-/// then persists contract-shaped Resource/Validation stub steps until their owners replace them.
-/// Every expected failure path ends in a terminal Failed/Rejected status with an error code.
+/// Runs one booking request's agentic workflow end to end: calls the Planner Agent, then the real
+/// Resource Agent (S3 — availability/pricing, plus one Pending stock_reservations row per line so
+/// the librarian's approval screen can see what would be reserved), then persists contract-shaped
+/// Scheduling/Validation stub steps (DOCS §04: "Use contract-correct fake Scheduling/... Validation
+/// outputs until later owners replace them") and moves the request to PendingApproval. Every failure
+/// path (ineligible, planner/resource unreachable, workflow timeout) ends in a terminal
+/// Failed/Rejected status with an error code — never a half-updated request.
 /// </summary>
 public interface IWorkflowOrchestrationService
 {
@@ -26,6 +30,8 @@ public sealed class WorkflowOrchestrationService(
     IBookingEligibilityService eligibilityService,
     IPlannerClient plannerClient,
     ISchedulingAgentClient schedulingAgentClient,
+    IResourceClient resourceClient,
+    IConsumableStockService stockService,
     IOptions<WorkflowLimitsOptions> limitsOptions) : IWorkflowOrchestrationService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -173,11 +179,64 @@ public sealed class WorkflowOrchestrationService(
             }
 
             // Steps 3-4 remain the S3/S4 contract-shaped stubs until their owners replace them.
-            var resourceOutput = BuildResourceStub(bookingRequest);
-            await LogStepAsync(execution.Id, 3, "Resource", "prepare_reservation",
-                input: new { items = plannerRequest.RequestedItems },
-                output: resourceOutput, StepValidationResult.Pass, null, durationMs: 0, ct);
+            // Step 3: the real Resource Agent (S3). The agent has no database access, so — exactly
+            // how `plannerRequest` above carries eligibility already computed — this API reads each
+            // requested consumable's current availability/price itself and hands both down on the
+            // wire. A consumable that no longer exists (or was deactivated) falls back to
+            // Available=0, which correctly makes that line `sufficient: false` rather than throwing.
+            var consumableIds = bookingRequest.Items.Select(i => i.ConsumableId).Distinct().ToList();
+            var consumablesById = await db.Consumables.AsNoTracking()
+                .Where(c => consumableIds.Contains(c.Id))
+                .ToDictionaryAsync(c => c.Id, ct);
 
+            var resourceRequest = new ResourceRequest
+            {
+                RequestedItems = bookingRequest.Items.Select(i =>
+                {
+                    consumablesById.TryGetValue(i.ConsumableId, out var consumable);
+                    return new ResourceRequestItem
+                    {
+                        ConsumableId = i.ConsumableId,
+                        Name = consumable?.Name ?? "Unknown consumable",
+                        Requested = i.Quantity,
+                        Available = consumable?.AvailableQuantity ?? 0,
+                        UnitPrice = consumable?.UnitPrice ?? 0m,
+                    };
+                }).ToList(),
+            };
+
+            var (resourceResponse, resourceDurationMs, resourceError) = await CallResourceWithRetriesAsync(resourceRequest, limits, ct);
+
+            await LogStepAsync(
+                execution.Id, stepNumber: 3, agentName: "Resource", toolName: "prepare_reservation",
+                input: resourceRequest,
+                output: resourceResponse is null ? new { error = resourceError } : resourceResponse,
+                validationResult: resourceResponse is not null ? StepValidationResult.Pass : StepValidationResult.Fail,
+                errorMessage: resourceError, durationMs: resourceDurationMs, ct);
+
+            if (resourceResponse is null)
+            {
+                await FailAsync(execution, bookingRequest, "STEP_RETRY_EXHAUSTED", resourceError ?? "Resource agent did not respond after retries.", ct);
+                return;
+            }
+
+            // DOCS §11: the Resource agent "creates Pending reservation records but does not
+            // actually reserve stock" — one per booking-request line, regardless of sufficiency, so
+            // the librarian's approval screen shows exactly what would be reserved (and what's
+            // short) before they decide. Real reservation (the guarded, no-oversell transition to
+            // Reserved) happens later, at approval time, via IConsumableStockService.ReserveAsync.
+            foreach (var item in bookingRequest.Items)
+            {
+                var pendingResult = await stockService.CreatePendingReservationAsync(item.Id, ct);
+                if (!pendingResult.Succeeded && pendingResult.Outcome != StockOperationOutcome.AlreadyReserved)
+                {
+                    await FailAsync(execution, bookingRequest, "RESOURCE_PENDING_RESERVATION_FAILED",
+                        pendingResult.Detail ?? "Could not create a pending stock reservation.", ct);
+                    return;
+                }
+            }
+
+            // Step 4: contract-shaped Validation stub — S4 replaces this in its own relay handoff.
             var validationOutput = BuildValidationStub(bookingRequest);
             await LogStepAsync(execution.Id, 4, "Validation", "calculate_quotation",
                 input: new { }, output: validationOutput, StepValidationResult.Pass, null, durationMs: 0, ct);
@@ -405,6 +464,41 @@ public sealed class WorkflowOrchestrationService(
         return errors;
     }
 
+    private async Task<(ResourceResponse? Response, int DurationMs, string? Error)> CallResourceWithRetriesAsync(
+        ResourceRequest request, WorkflowLimitsOptions limits, CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        string? lastError = null;
+        var maxAttempts = limits.MaxRetriesPerStep + 1;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            attemptCts.CancelAfter(TimeSpan.FromSeconds(limits.ToolCallTimeoutSeconds));
+            try
+            {
+                var response = await resourceClient.PrepareReservationAsync(request, attemptCts.Token);
+                stopwatch.Stop();
+                return (response, (int)stopwatch.ElapsedMilliseconds, null);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                lastError = $"Resource call timed out after {limits.ToolCallTimeoutSeconds}s (attempt {attempt}/{maxAttempts}).";
+            }
+            catch (HttpRequestException ex)
+            {
+                lastError = $"Resource call failed: {ex.Message} (attempt {attempt}/{maxAttempts}).";
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+            {
+                lastError = $"Resource returned an invalid response: {ex.Message} (attempt {attempt}/{maxAttempts}).";
+            }
+        }
+
+        stopwatch.Stop();
+        return (null, (int)stopwatch.ElapsedMilliseconds, lastError);
+    }
+
     private async Task FailAsync(WorkflowExecution execution, BookingRequest bookingRequest, string errorCode, string errorMessage, CancellationToken ct)
     {
         execution.Status = WorkflowStatus.Failed;
@@ -440,28 +534,6 @@ public sealed class WorkflowOrchestrationService(
         await db.SaveChangesAsync(ct);
     }
 
-    private static object BuildResourceStub(BookingRequest br)
-    {
-        const decimal placeholderUnitPrice = 1m; // stub only — replaced by the real Resource agent (S3)
-        var items = br.Items.Select(i => new
-        {
-            consumableId = i.ConsumableId,
-            requested = i.Quantity,
-            available = i.Quantity,
-            sufficient = true,
-            unitPrice = placeholderUnitPrice,
-            lineTotal = placeholderUnitPrice * i.Quantity,
-        }).ToArray();
-
-        return new
-        {
-            stub = true,
-            items,
-            totalCost = items.Sum(i => i.lineTotal),
-            allAvailable = true,
-        };
-    }
-
     private static object BuildValidationStub(BookingRequest br)
     {
         // Deliberately naive placeholder arithmetic — S4 (Costing & Approval) replaces this with the
@@ -479,7 +551,7 @@ public sealed class WorkflowOrchestrationService(
             results = new[]
             {
                 new { rule = "validate_capacity", passed = true, detail = "Stub: capacity check deferred to S2." },
-                new { rule = "validate_stock", passed = true, detail = "Stub: stock check deferred to S3." },
+                new { rule = "validate_stock", passed = true, detail = "Stub: this stage's own re-check deferred to S4 (step 3's Resource output already has the real availability)." },
                 new { rule = "validate_budget", passed = total <= br.Budget, detail = $"Stub estimate {total:0.00} vs budget {br.Budget:0.00}." },
             },
             quotation = new

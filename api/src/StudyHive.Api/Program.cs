@@ -198,6 +198,13 @@ builder.Services.AddHttpClient<IPlannerClient, PlannerClient>(client =>
 
 builder.Services.AddHttpClient<ISchedulingAgentClient, SchedulingAgentClient>(client =>
 {
+    var agentBaseUrl = builder.Configuration["Agent:BaseUrl"] ?? "http://localhost:8000";
+    client.BaseAddress = new Uri(agentBaseUrl);
+});
+
+// S3: same agent service, same base URL/key — just a different route (/resource/prepare-reservation).
+builder.Services.AddHttpClient<IResourceClient, ResourceClient>(client =>
+{
     client.BaseAddress = new Uri(agentOptions.BaseUrl);
     if (!string.IsNullOrWhiteSpace(agentOptions.InternalApiKey))
     {
@@ -208,6 +215,8 @@ builder.Services.AddHttpClient<ISchedulingAgentClient, SchedulingAgentClient>(cl
 builder.Services.AddScoped<IBookingEligibilityService, BookingEligibilityService>();
 builder.Services.AddScoped<IRoomBookingService, RoomBookingService>();
 builder.Services.AddScoped<IWorkflowOrchestrationService, WorkflowOrchestrationService>();
+builder.Services.AddScoped<ISchedulingAgentClient, SchedulingAgentClient>();
+builder.Services.AddScoped<IConsumableStockService, ConsumableStockService>(); // S3: consumables & stock
 builder.Services.AddSingleton<IWorkflowQueue, WorkflowQueue>();
 builder.Services.AddHostedService<WorkflowBackgroundService>();
 

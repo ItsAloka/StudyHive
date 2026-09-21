@@ -1,75 +1,200 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using StudyHive.Api.Common;
+using StudyHive.Api.Data;
+using StudyHive.Api.Data.Entities;
+using StudyHive.Api.Security;
+using StudyHive.Api.Services;
 
 namespace StudyHive.Api.Controllers.Store;
 
-/// <summary>
-/// S3: the consumables catalogue and its stock ledger.
-///
-/// SCAFFOLD ONLY - owned by S3 (Consumables and Stock), not implemented yet. Every action below returns 501 so the
-/// route, its role gate and its shape are pinned by the plan's DOCS section 11 API table before
-/// anyone writes a line of logic. Nothing here fabricates data: an unimplemented endpoint must
-/// never answer as though it worked.
-///
-/// To implement one: inject StudyHiveDbContext, delete the NotImplemented() call, and return the
-/// real result. Keep the route and the [Authorize] attribute exactly as they are - the web and
-/// mobile clients are already written against them.
-///
-/// House rules that already apply here (see DOCS/S2_S3_S4_UI_Interface_Map.md):
-///   - Lists take [FromQuery] PageQuery and return PagedResult&lt;T&gt;. Unknown sortBy is a 400.
-///   - Errors are RFC 7807 from the global handler. Never hand-roll an error body.
-///   - Deletes are deactivations, not physical deletes.
-/// </summary>
+/// <summary>S3: the consumables catalogue and its stock ledger. See DOCS §11 API table.</summary>
 [ApiController]
 [Route("api/consumables")]
 [Authorize]
-public sealed class ConsumablesController : ControllerBase
+public sealed class ConsumablesController(StudyHiveDbContext db, IConsumableStockService stockService) : ControllerBase
 {
-    /// <summary>The single place this scaffold refuses. Replace the call, not this helper.</summary>
-    private ObjectResult NotImplemented(string what) => Problem(
-        type: "https://studyhive.dev/errors/not-implemented",
-        title: "Not implemented yet",
-        statusCode: StatusCodes.Status501NotImplemented,
-        detail: $"{what} is owned by S3 (Consumables and Stock) and has not been built yet.");
-
-    /// <summary>Add a consumable.</summary>
     [HttpPost]
     [Authorize(Roles = $"{Roles.StoreOfficer},{Roles.Admin}")]
-    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
-    public IActionResult Create() => NotImplemented("Adding a consumable");
+    [ProducesResponseType(typeof(ConsumableResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Create(CreateConsumableRequest request, CancellationToken ct)
+    {
+        var nameTaken = await db.Consumables.AsNoTracking().AnyAsync(c => c.Name == request.Name.Trim(), ct);
+        if (nameTaken)
+        {
+            return Problem(
+                type: "https://studyhive.dev/errors/conflict",
+                title: "Consumable name already exists",
+                statusCode: StatusCodes.Status409Conflict,
+                detail: $"A consumable named '{request.Name}' already exists.");
+        }
 
-    /// <summary>List consumables with search, filter, sort and pagination. Backs W-19.</summary>
+        var consumable = new Consumable
+        {
+            Id = Guid.NewGuid(),
+            Name = request.Name.Trim(),
+            Description = request.Description?.Trim(),
+            Unit = request.Unit.Trim(),
+            UnitPrice = request.UnitPrice,
+            StockQuantity = request.StockQuantity,
+            MinStockLevel = request.MinStockLevel,
+        };
+
+        db.Consumables.Add(consumable);
+        await db.SaveChangesAsync(ct);
+
+        return CreatedAtAction(nameof(GetById), new { id = consumable.Id }, ConsumableResponse.From(consumable));
+    }
+
+    /// <summary>Backs W-19: search, filter, sort, paginate.</summary>
     [HttpGet]
-    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
-    public IActionResult List([FromQuery] PageQuery query) => NotImplemented("Listing consumables");
+    [ProducesResponseType(typeof(PagedResult<ConsumableResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> List([FromQuery] PageQuery query, [FromQuery] bool activeOnly = true, CancellationToken ct = default)
+    {
+        IQueryable<Consumable> consumables = db.Consumables.AsNoTracking();
 
-    /// <summary>Consumables below their reorder level. Backs W-21 and the email to the store officer.</summary>
+        if (activeOnly)
+        {
+            consumables = consumables.Where(c => c.IsActive);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var search = $"%{query.Search.Trim()}%";
+            consumables = consumables.Where(c => EF.Functions.ILike(c.Name, search));
+        }
+
+        var sortDescending = string.Equals(query.SortDir, "desc", StringComparison.OrdinalIgnoreCase);
+        IOrderedQueryable<Consumable>? sorted = query.SortBy?.ToLowerInvariant() switch
+        {
+            null or "" or "name" => sortDescending ? consumables.OrderByDescending(c => c.Name) : consumables.OrderBy(c => c.Name),
+            "unitprice" => sortDescending ? consumables.OrderByDescending(c => c.UnitPrice) : consumables.OrderBy(c => c.UnitPrice),
+            "stockquantity" => sortDescending ? consumables.OrderByDescending(c => c.StockQuantity) : consumables.OrderBy(c => c.StockQuantity),
+            "createdat" => sortDescending ? consumables.OrderByDescending(c => c.CreatedAt) : consumables.OrderBy(c => c.CreatedAt),
+            _ => null,
+        };
+        if (sorted is null)
+        {
+            ModelState.AddModelError(nameof(query.SortBy), $"Unknown sortBy value '{query.SortBy}'.");
+            return ValidationProblem(ModelState);
+        }
+        consumables = sorted;
+
+        var totalItems = await consumables.CountAsync(ct);
+        var items = await consumables
+            .Skip((query.Page - 1) * query.PageSize)
+            .Take(query.PageSize)
+            .Select(c => ConsumableResponse.From(c))
+            .ToListAsync(ct);
+
+        return Ok(PagedResult<ConsumableResponse>.Create(items, query.Page, query.PageSize, totalItems));
+    }
+
+    /// <summary>Backs W-21 and the low-stock email to the store officer. Mirrors the partial index
+    /// <c>ix_cons_low</c> (S3Configurations.cs) exactly, so this list is always what that index covers.</summary>
     [HttpGet("low-stock")]
     [Authorize(Roles = $"{Roles.StoreOfficer},{Roles.Librarian}")]
-    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
-    public IActionResult LowStock() => NotImplemented("Low-stock alerts");
+    [ProducesResponseType(typeof(IReadOnlyList<ConsumableResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> LowStock(CancellationToken ct)
+    {
+        var items = await db.Consumables.AsNoTracking()
+            .Where(c => c.IsActive && c.StockQuantity <= c.MinStockLevel)
+            .OrderBy(c => c.StockQuantity)
+            .Select(c => ConsumableResponse.From(c))
+            .ToListAsync(ct);
 
-    /// <summary>Get one consumable with its ledger. Backs W-20.</summary>
+        return Ok(items);
+    }
+
+    /// <summary>Backs W-20: detail plus its recent ledger entries.</summary>
     [HttpGet("{id:guid}")]
-    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
-    public IActionResult GetById(Guid id) => NotImplemented("Consumable detail");
+    [ProducesResponseType(typeof(ConsumableDetailResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetById(Guid id, CancellationToken ct)
+    {
+        var consumable = await db.Consumables.AsNoTracking().SingleOrDefaultAsync(c => c.Id == id, ct);
+        if (consumable is null) return NotFound();
 
-    /// <summary>Update a consumable.</summary>
+        var recentTransactions = await db.StockTransactions.AsNoTracking()
+            .Where(t => t.ConsumableId == id)
+            .OrderByDescending(t => t.CreatedAt)
+            .Take(20)
+            .Select(t => StockTransactionResponse.From(t))
+            .ToListAsync(ct);
+
+        return Ok(new ConsumableDetailResponse
+        {
+            Consumable = ConsumableResponse.From(consumable),
+            RecentTransactions = recentTransactions,
+        });
+    }
+
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = $"{Roles.StoreOfficer}")]
-    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
-    public IActionResult Update(Guid id) => NotImplemented("Updating a consumable");
+    [Authorize(Roles = Roles.StoreOfficer)]
+    [ProducesResponseType(typeof(ConsumableResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Update(Guid id, UpdateConsumableRequest request, CancellationToken ct)
+    {
+        var consumable = await db.Consumables.SingleOrDefaultAsync(c => c.Id == id, ct);
+        if (consumable is null) return NotFound();
 
-    /// <summary>Deactivate a consumable. Never a physical delete.</summary>
+        var nameTaken = await db.Consumables.AsNoTracking()
+            .AnyAsync(c => c.Id != id && c.Name == request.Name.Trim(), ct);
+        if (nameTaken)
+        {
+            return Problem(
+                type: "https://studyhive.dev/errors/conflict",
+                title: "Consumable name already exists",
+                statusCode: StatusCodes.Status409Conflict,
+                detail: $"A consumable named '{request.Name}' already exists.");
+        }
+
+        // Stock counts are never edited here — they only move through /stock-in and the
+        // reservation lifecycle, each of which writes a matching stock_transactions row. A plain
+        // PUT that could silently change stock_quantity would break the ledger's reconcilability.
+        consumable.Name = request.Name.Trim();
+        consumable.Description = request.Description?.Trim();
+        consumable.Unit = request.Unit.Trim();
+        consumable.UnitPrice = request.UnitPrice;
+        consumable.MinStockLevel = request.MinStockLevel;
+        consumable.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+        return Ok(ConsumableResponse.From(consumable));
+    }
+
+    /// <summary>Deactivate — never a physical delete (DOCS shared conventions).</summary>
     [HttpDelete("{id:guid}")]
     [Authorize(Policy = "AdminOnly")]
-    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
-    public IActionResult Deactivate(Guid id) => NotImplemented("Deactivating a consumable");
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Deactivate(Guid id, CancellationToken ct)
+    {
+        var consumable = await db.Consumables.SingleOrDefaultAsync(c => c.Id == id, ct);
+        if (consumable is null) return NotFound();
 
-    /// <summary>Add stock. A business operation, not CRUD: it writes a stock_transactions row as well as moving the balance.</summary>
+        consumable.IsActive = false;
+        consumable.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        return NoContent();
+    }
+
+    /// <summary>Add stock. A business operation, not CRUD: it writes a stock_transactions row as
+    /// well as moving the balance (DOCS §11).</summary>
     [HttpPost("{id:guid}/stock-in")]
-    [Authorize(Roles = $"{Roles.StoreOfficer}")]
-    [ProducesResponseType(StatusCodes.Status501NotImplemented)]
-    public IActionResult StockIn(Guid id) => NotImplemented("Stock-in");
+    [Authorize(Roles = Roles.StoreOfficer)]
+    [ProducesResponseType(typeof(ConsumableResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> StockIn(Guid id, StockInRequest request, CancellationToken ct)
+    {
+        var result = await stockService.StockInAsync(id, request.Quantity, User.GetUserId(), request.Notes?.Trim(), ct);
+
+        if (result.Outcome == StockOperationOutcome.ConsumableNotFound) return NotFound();
+
+        return Ok(ConsumableResponse.From(result.Consumable!));
+    }
 }
