@@ -56,6 +56,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // AUDIT C-05: why the app returned here, when the session could not be refreshed.
+    final signedOutReason = context.select<AuthProvider, String?>((a) => a.signedOutReason);
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -103,9 +105,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           : null,
                       onFieldSubmitted: (_) => _submit(),
                     ),
-                    if (_error != null) ...[
+                    if ((_error ?? signedOutReason) != null) ...[
                       const SizedBox(height: 14),
-                      InlineError(_error!),
+                      InlineError((_error ?? signedOutReason)!),
                     ],
                     const SizedBox(height: 14),
                     PrimaryButton(

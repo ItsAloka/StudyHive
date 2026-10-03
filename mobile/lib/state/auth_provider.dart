@@ -23,18 +23,68 @@ class AuthProvider extends ChangeNotifier {
   final TokenStore _tokenStore;
   final ApiClient _apiClient;
 
+  static const sessionExpiredMessage =
+      'Your session expired, please sign in again';
+
   String? _accessToken;
   String? _refreshToken;
   String? _studentName;
   String? _studentEmail;
+  String? _signedOutReason;
+
+  /// The refresh in flight, shared by every call that hits a 401 at the same time.
+  Future<bool>? _refreshing;
 
   AuthProvider({TokenStore? tokenStore, ApiClient? apiClient})
       : _tokenStore = tokenStore ?? const SecureTokenStore(),
-        _apiClient = apiClient ?? ApiClient();
+        _apiClient = apiClient ?? ApiClient() {
+    _apiClient.onUnauthorized = refreshAfterUnauthorized;
+  }
 
   bool get isAuthenticated => _accessToken != null;
   String? get studentName => _studentName;
   String? get studentEmail => _studentEmail;
+
+  /// Why the user is looking at the sign-in screen, when it was not their choice (the session
+  /// could not be refreshed). Cleared by the next sign-in.
+  String? get signedOutReason => _signedOutReason;
+
+  /// AUDIT C-05: the access token lives 30 minutes. On a 401 the API client calls this once; it
+  /// exchanges the stored refresh token for a new pair, and every concurrent caller waits on the
+  /// same exchange. If the refresh token is rejected the session ends and the sign-in screen says
+  /// why; a network failure keeps the session (the original call's error is shown instead).
+  Future<bool> refreshAfterUnauthorized() =>
+      _refreshing ??= _refresh().whenComplete(() => _refreshing = null);
+
+  Future<bool> _refresh() async {
+    final refreshToken = _refreshToken ?? await _tokenStore.read(_refreshTokenKey);
+    if (refreshToken == null) {
+      await _expireSession();
+      return false;
+    }
+    try {
+      final response = await _apiClient.post('/api/auth/refresh', body: {
+        'refreshToken': refreshToken,
+      }) as Map<String, dynamic>;
+      final user = response['user'] as Map<String, dynamic>;
+      await _applySession(
+        accessToken: response['accessToken'] as String,
+        refreshToken: response['refreshToken'] as String,
+        studentName: user['fullName'] as String,
+        studentEmail: user['email'] as String,
+      );
+      return true;
+    } on ApiException catch (e) {
+      if (e.status == 0) return false; // offline or timed out: keep the session
+      await _expireSession();
+      return false;
+    }
+  }
+
+  Future<void> _expireSession() async {
+    if (_accessToken != null) _signedOutReason = sessionExpiredMessage;
+    await _clearSession();
+  }
 
   /// Shared with the other feature providers (see main.dart) so they always send whatever access
   /// token is currently active — logging in/out updates this same instance's token in place.
@@ -126,6 +176,7 @@ class AuthProvider extends ChangeNotifier {
     _refreshToken = refreshToken;
     _studentName = studentName;
     _studentEmail = studentEmail;
+    _signedOutReason = null;
     _apiClient.accessToken = accessToken;
     await _tokenStore.write(_accessTokenKey, accessToken);
     await _tokenStore.write(_refreshTokenKey, refreshToken);
