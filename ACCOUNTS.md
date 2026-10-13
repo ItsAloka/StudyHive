@@ -78,10 +78,10 @@ Creates and tracks their own booking requests.
 
 ## The two URLs
 
-| App | URL | Sign in as |
-|---|---|---|
-| **Web** — staff dashboard | <http://localhost:5173> | librarian / storeofficer / admin |
-| **Mobile** — student app | <http://localhost:8090> | student |
+| App                              | URL                                           | Sign in as                       |
+| -------------------------------- | --------------------------------------------- | -------------------------------- |
+| **Web** — staff dashboard | [http://localhost:5173](http://localhost:5173) | librarian / storeofficer / admin |
+| **Mobile** — student app  | [http://localhost:8090](http://localhost:8090) | student                          |
 
 Each app rejects the other's accounts **on purpose**. The student cannot sign in to the web
 dashboard and staff cannot sign in to the mobile app; both say so clearly. That is the design, not a
@@ -118,7 +118,7 @@ sending — so it is autofill or a typo. If it returns 401, tell me and I will l
 
 **"Something went wrong. Please try again."** is a different failure. That one only appears when the
 request never completes, which means the API is not running or is not reachable. Check
-<http://localhost:5299/health>.
+[http://localhost:5299/health](http://localhost:5299/health).
 
 ---
 
@@ -173,12 +173,12 @@ build on a different port and the browser blocks every API call.
 
 The seeder creates real data, not empty screens:
 
-| | |
-|---|---|
-| Booking requests | 10, across 8 different statuses |
-| Workflow executions | 8, with 28 step logs |
-| Consumables | 3 |
-| Student profiles | 2 |
+|                     |                                 |
+| ------------------- | ------------------------------- |
+| Booking requests    | 10, across 8 different statuses |
+| Workflow executions | 8, with 28 step logs            |
+| Consumables         | 3                               |
+| Student profiles    | 2                               |
 
 Statuses cover Draft, Processing, PendingApproval (×3), Approved, Rejected, Completed, Cancelled and
 Failed — so the request timeline has something to show in every state, including the failure path.

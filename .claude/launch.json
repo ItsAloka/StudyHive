@@ -8,6 +8,11 @@
       "port": 5173
     },
     {
+      "name": "web-docker",
+      "url": "http://localhost:8081",
+      "port": 8081
+    },
+    {
       "name": "mobile-web",
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8090", "--directory", "mobile/build/web"],

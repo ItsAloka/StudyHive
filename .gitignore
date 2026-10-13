@@ -48,3 +48,7 @@ knowledge/
 
 # DevTeam local tooling state (per-machine, auto-refreshed; not project source)
 .devteam/
+
+# ---- Local submission material (report, APK, screenshots) ----
+report/
+qr-*.png
