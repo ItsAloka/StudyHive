@@ -9,6 +9,14 @@ dashboard, and the result goes back to the student's phone and inbox. Everything
 
 SE3090 Software Engineering Frameworks, Assignment 1 (2026), group **SE3090_2026-AI-46**.
 
+<p align="center">
+  <img src="DOCS/images/screenshots/mobile/home.png" height="420" alt="Mobile app home">
+  &nbsp;
+  <img src="DOCS/images/screenshots/mobile/workflow_progress.png" height="420" alt="Live agent progress">
+  &nbsp;
+  <img src="DOCS/images/screenshots/web/review_proposal.png" height="420" alt="Web review proposal">
+</p>
+
 | | Link |
 |---|---|
 | Web dashboard (staff) | https://web-production-a74ec.up.railway.app |
@@ -27,6 +35,7 @@ SE3090 Software Engineering Frameworks, Assignment 1 (2026), group **SE3090_2026
 - [Architecture](#architecture)
 - [The agentic AI workflow](#the-agentic-ai-workflow)
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Tech stack](#tech-stack)
 - [Repository layout](#repository-layout)
 - [Run it locally](#run-it-locally)
@@ -120,6 +129,89 @@ Review page: validation checks, quotation and the approval buttons.
 - Append-only audit log of every staff action
 
 ![Mobile flow](DOCS/images/mobile-flow.png)
+
+## Screenshots
+
+Taken from the final report: the Android app on an emulator and the staff web in a desktop
+browser, running against the Docker stack with demo / test data.
+
+### Mobile app (Flutter, Student)
+
+<details open>
+<summary><b>Booking a room: from browsing to approval</b></summary>
+<br>
+
+<table>
+<tr><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/login.png" width="200" alt="Sign in"><br><sub>Sign in</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/home.png" width="200" alt="Home"><br><sub>Home</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/rooms.png" width="200" alt="Browse rooms"><br><sub>Browse rooms</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/room_detail.png" width="200" alt="Room detail"><br><sub>Room detail</sub></td></tr>
+<tr><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/room_schedule.png" width="200" alt="Room schedule"><br><sub>Room schedule</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/request_step1.png" width="200" alt="Request: step 1"><br><sub>Request: step 1</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/request_step2.png" width="200" alt="Request: step 2"><br><sub>Request: step 2</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/request_review.png" width="200" alt="Request: review"><br><sub>Request: review</sub></td></tr>
+<tr><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/workflow_progress.png" width="200" alt="Live agent progress"><br><sub>Live agent progress</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/waiting_approval.png" width="200" alt="Waiting for approval"><br><sub>Waiting for approval</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/quotation.png" width="200" alt="Quotation"><br><sub>Quotation</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/approval_status.png" width="200" alt="Approval status"><br><sub>Approval status</sub></td></tr>
+</table>
+
+</details>
+
+<details open>
+<summary><b>Bookings, check-in and profile</b></summary>
+<br>
+
+<table>
+<tr><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/bookings.png" width="200" alt="My bookings"><br><sub>My bookings</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/booking_detail.png" width="200" alt="Booking detail + QR check-in"><br><sub>Booking detail + QR check-in</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/history.png" width="200" alt="History"><br><sub>History</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/profile.png" width="200" alt="Profile"><br><sub>Profile</sub></td></tr>
+<tr><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/edit_profile.png" width="200" alt="Edit profile"><br><sub>Edit profile</sub></td><td align="center" width="25%"><img src="DOCS/images/screenshots/mobile/change_password.png" width="200" alt="Change password"><br><sub>Change password</sub></td></tr>
+</table>
+
+</details>
+
+### Web dashboard (React, staff)
+
+<details open>
+<summary><b>Librarian: approvals, requests, workflow runs and students</b></summary>
+<br>
+
+<table>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/login.png" alt="Staff sign in"><br><sub>Staff sign in</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/lib_dashboard.png" alt="Librarian dashboard"><br><sub>Librarian dashboard</sub></td></tr>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/approval_queue.png" alt="Approval queue"><br><sub>Approval queue</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/review_proposal.png" alt="Review an agent proposal"><br><sub>Review an agent proposal</sub></td></tr>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/approve_confirm.png" alt="Approve confirmation"><br><sub>Approve confirmation</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/quotation_detail.png" alt="Quotation detail"><br><sub>Quotation detail</sub></td></tr>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/requests.png" alt="All booking requests"><br><sub>All booking requests</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/request_detail.png" alt="Request detail"><br><sub>Request detail</sub></td></tr>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/workflow_history.png" alt="Workflow runs"><br><sub>Workflow runs</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/workflow_execution.png" alt="Workflow execution (step logs)"><br><sub>Workflow execution (step logs)</sub></td></tr>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/students.png" alt="Students"><br><sub>Students</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/student_profile.png" alt="Student profile from a request"><br><sub>Student profile from a request</sub></td></tr>
+</table>
+
+</details>
+
+<details>
+<summary><b>Librarian: rooms, equipment, maintenance and reports</b></summary>
+<br>
+
+<table>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/rooms.png" alt="Rooms"><br><sub>Rooms</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/room_detail.png" alt="Room detail"><br><sub>Room detail</sub></td></tr>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/room_calendar.png" alt="Room calendar"><br><sub>Room calendar</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/equipment.png" alt="Equipment"><br><sub>Equipment</sub></td></tr>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/maintenance.png" alt="Maintenance"><br><sub>Maintenance</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/reports.png" alt="Reports"><br><sub>Reports</sub></td></tr>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/room_utilisation.png" alt="Room utilisation report"><br><sub>Room utilisation report</sub></td></tr>
+</table>
+
+</details>
+
+<details>
+<summary><b>Store Officer: consumables, stock and suppliers</b></summary>
+<br>
+
+<table>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/store_dashboard.png" alt="Store Officer dashboard"><br><sub>Store Officer dashboard</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/consumables.png" alt="Consumables"><br><sub>Consumables</sub></td></tr>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/consumable_detail.png" alt="Consumable detail"><br><sub>Consumable detail</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/low_stock.png" alt="Low stock"><br><sub>Low stock</sub></td></tr>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/reservations.png" alt="Stock reservations"><br><sub>Stock reservations</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/suppliers.png" alt="Suppliers"><br><sub>Suppliers</sub></td></tr>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/consumable_usage.png" alt="Consumable usage report"><br><sub>Consumable usage report</sub></td></tr>
+</table>
+
+</details>
+
+<details>
+<summary><b>Admin: dashboard and audit log</b></summary>
+<br>
+
+<table>
+<tr><td align="center" width="50%"><img src="DOCS/images/screenshots/web/admin_dashboard.png" alt="Admin dashboard"><br><sub>Admin dashboard</sub></td><td align="center" width="50%"><img src="DOCS/images/screenshots/web/audit_log.png" alt="Audit log"><br><sub>Audit log</sub></td></tr>
+</table>
+
+</details>
 
 ## Tech stack
 
